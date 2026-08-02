@@ -1,0 +1,28 @@
+{
+  "interval_seconds": 60,
+
+  "notifiers": [
+    { "type": "console" }
+  ],
+
+  "watches": [
+    {
+      "label": "Bitcoin",
+      "symbol": "bitcoin",
+      "provider": "coingecko",
+      "rules": [
+        { "type": "above", "threshold": 150000 },
+        { "type": "below", "threshold": 80000 },
+        { "type": "percent_move", "percent": 5 }
+      ]
+    },
+    {
+      "label": "SOL/USDT",
+      "symbol": "SOLUSDT",
+      "provider": "binance",
+      "rules": [
+        { "type": "percent_move", "percent": 3 }
+      ]
+    }
+  ]
+}
