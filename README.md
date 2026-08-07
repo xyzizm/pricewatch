@@ -1,5 +1,7 @@
 # PriceWatch
 
+[![CI](https://github.com/xyzizm/pricewatch/actions/workflows/ci.yml/badge.svg)](https://github.com/xyzizm/pricewatch/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 Crypto price alerts you configure in one JSON file. Watches any number of coins across multiple exchanges and tells you when something you care about happens.
 
 Self-hosted, no account, no API key required for the default setup.
