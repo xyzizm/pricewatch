@@ -9,7 +9,7 @@ Self-hosted, no account, no API key required for the default setup.
 ## Quick start
 
 ```bash
-pip install requests
+pip install -r requirements.txt
 cp config.example.json config.json
 python3 run.py
 ```
