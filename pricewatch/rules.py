@@ -41,7 +41,7 @@ class AboveRule:
     """Fire when price crosses above a threshold.
 
     Only fires on the crossing, not on every check while the price stays high.
-    Without that, a wallet sitting above the threshold would spam you forever.
+    Without that, a coin sitting above the threshold would spam you forever.
     """
 
     name = "above"

@@ -17,6 +17,7 @@ from pricewatch.app import (
     build_watches,
     check_watch,
     deliver,
+    fetch_prices,
     run_once,
 )
 from pricewatch.notifiers import ConsoleNotifier, build_notifier
@@ -361,6 +362,152 @@ def test_provider_factory_validation():
         check("provider: rejects unknown name", "Unknown provider" in str(exc))
 
 
+# ---------------------------------------------------------------- batching
+
+class BatchingProvider:
+    """Prices every symbol in one call and counts how many calls it took."""
+
+    name = "batching"
+
+    def __init__(self, prices):
+        self.prices = dict(prices)
+        self.batch_calls = 0
+        self.single_calls = 0
+
+    def fetch(self, symbol):
+        self.single_calls += 1
+        return self.prices.get(symbol)
+
+    def fetch_many(self, symbols):
+        self.batch_calls += 1
+        return {symbol: self.prices.get(symbol) for symbol in symbols}
+
+
+def test_fetch_prices_uses_batching_when_available():
+    provider = BatchingProvider({"BTC": 100, "ETH": 50, "SOL": 20})
+    watches = [
+        Watch(symbol=s, provider=provider, rules=[AboveRule(1)])
+        for s in ("BTC", "ETH", "SOL")
+    ]
+    prices = fetch_prices(watches)
+
+    check("batch: three symbols cost one request",
+          provider.batch_calls == 1, provider.batch_calls)
+    check("batch: no per-symbol calls were made",
+          provider.single_calls == 0, provider.single_calls)
+    check("batch: every watch got its price",
+          sorted(prices.values()) == [20, 50, 100], prices)
+
+
+def test_fetch_prices_falls_back_to_single_fetch():
+    # A provider implementing only fetch() is the documented contract.
+    # It must keep working without knowing fetch_many exists.
+    provider = FakeProvider([100, 200])
+    watches = [
+        Watch(symbol="BTC", provider=provider, rules=[AboveRule(1)]),
+        Watch(symbol="ETH", provider=provider, rules=[AboveRule(1)]),
+    ]
+    prices = fetch_prices(watches)
+
+    check("batch: fetch-only provider is still priced",
+          sorted(p for p in prices.values() if p is not None) == [100, 200], prices)
+
+
+def test_run_once_delivers_with_fetch_only_provider():
+    # Guards the whole path: a provider with no fetch_many must still produce
+    # delivered alerts, not a silent zero.
+    provider = FakeProvider([150])
+    watch = Watch(symbol="BTC", provider=provider, rules=[AboveRule(100)])
+    recorder = RecordingNotifier()
+
+    delivered = run_once([watch], [recorder], MemoryStore())
+    check("batch: fetch-only provider still delivers alerts",
+          delivered == 1 and len(recorder.sent) == 1,
+          f"delivered={delivered} sent={len(recorder.sent)}")
+
+
+def test_fetch_prices_isolates_a_broken_provider():
+    class Broken:
+        name = "broken"
+
+        def fetch_many(self, symbols):
+            raise RuntimeError("boom")
+
+    good = BatchingProvider({"ETH": 50})
+    watches = [
+        Watch(symbol="BTC", provider=Broken(), rules=[AboveRule(1)]),
+        Watch(symbol="ETH", provider=good, rules=[AboveRule(1)]),
+    ]
+    prices = fetch_prices(watches)
+    values = sorted(prices.values(), key=lambda v: (v is None, v))
+
+    check("batch: a broken provider does not blank the others",
+          values == [50, None], values)
+
+
+def test_fetch_prices_keeps_duplicate_symbols_independent():
+    provider = BatchingProvider({"BTC": 100})
+    first = Watch(symbol="BTC", provider=provider, rules=[AboveRule(50)])
+    second = Watch(symbol="BTC", provider=provider, rules=[BelowRule(200)])
+    prices = fetch_prices([first, second])
+
+    check("batch: two watches on one symbol both get a price",
+          prices[id(first)] == 100 and prices[id(second)] == 100, prices)
+
+
+def test_check_watch_accepts_a_supplied_price():
+    provider = BatchingProvider({"BTC": 999})
+    watch = Watch(symbol="BTC", provider=provider, rules=[AboveRule(100)])
+
+    alerts = check_watch(watch, MemoryStore(), 150)
+    check("batch: supplied price is used", len(alerts) == 1 and alerts[0].price == 150,
+          alerts)
+    check("batch: supplied price skips the provider entirely",
+          provider.batch_calls == 0 and provider.single_calls == 0)
+
+
+def test_check_watch_supplied_none_is_a_skip():
+    provider = BatchingProvider({"BTC": 999})
+    watch = Watch(symbol="BTC", provider=provider, rules=[AboveRule(100)])
+
+    alerts = check_watch(watch, MemoryStore(), None)
+    check("batch: a supplied None is treated as a failed fetch", alerts == [], alerts)
+    check("batch: a supplied None does not fall back to fetching",
+          provider.batch_calls == 0 and provider.single_calls == 0)
+
+
+def test_identical_watches_share_one_provider():
+    config = {
+        "watches": [
+            {"symbol": "bitcoin", "rules": [{"type": "above", "threshold": 1}]},
+            {"symbol": "ethereum", "rules": [{"type": "above", "threshold": 1}]},
+            {"symbol": "solana", "provider": "binance",
+             "rules": [{"type": "above", "threshold": 1}]},
+        ]
+    }
+    watches = build_watches(config)
+    coingecko = {id(w.provider) for w in watches if w.provider.name == "coingecko"}
+    binance = {id(w.provider) for w in watches if w.provider.name == "binance"}
+
+    check("wiring: same provider and options share one instance",
+          len(coingecko) == 1, len(coingecko))
+    check("wiring: a different provider stays separate", len(binance) == 1)
+
+
+def test_differing_options_do_not_share_a_provider():
+    config = {
+        "watches": [
+            {"symbol": "bitcoin", "provider_options": {"vs_currency": "usd"},
+             "rules": [{"type": "above", "threshold": 1}]},
+            {"symbol": "ethereum", "provider_options": {"vs_currency": "eur"},
+             "rules": [{"type": "above", "threshold": 1}]},
+        ]
+    }
+    watches = build_watches(config)
+    check("wiring: different provider options get separate instances",
+          watches[0].provider is not watches[1].provider)
+
+
 # ---------------------------------------------------------------- run
 
 if __name__ == "__main__":
@@ -384,6 +531,15 @@ if __name__ == "__main__":
         test_build_notifiers_defaults_to_console,
         test_notifier_factory_validation,
         test_provider_factory_validation,
+        test_fetch_prices_uses_batching_when_available,
+        test_fetch_prices_falls_back_to_single_fetch,
+        test_run_once_delivers_with_fetch_only_provider,
+        test_fetch_prices_isolates_a_broken_provider,
+        test_fetch_prices_keeps_duplicate_symbols_independent,
+        test_check_watch_accepts_a_supplied_price,
+        test_check_watch_supplied_none_is_a_skip,
+        test_identical_watches_share_one_provider,
+        test_differing_options_do_not_share_a_provider,
     ]:
         fn()
 

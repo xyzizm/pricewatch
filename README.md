@@ -116,7 +116,7 @@ Rules are pure functions of `(symbol, price, previous)`: no network, no files, n
 python3 tests/test_pricewatch.py
 ```
 
-54 tests covering rule edge cases, config validation, state persistence, and failure isolation.
+68 tests covering rule edge cases, config validation, state persistence, request batching, and failure isolation.
 
 ### Failure isolation
 
@@ -169,5 +169,5 @@ Or skip the daemon entirely and use cron with `--once`:
 
 ## Limits
 
-- Public CoinGecko and Binance endpoints have rate limits. For many coins at high frequency, use your own API key or raise the interval.
+- Public CoinGecko and Binance endpoints have rate limits. CoinGecko is priced in a single batched request per cycle regardless of how many coins you watch, so the usual cause of a 429 is a short `interval_seconds`, not a long watch list. Binance prices one symbol per request. Rate-limit responses are reported with the provider name and what to change.
 - `percent_move` compares against the *previous check*, not a rolling window. A 5% move spread over an hour of 1-minute checks will not fire.
