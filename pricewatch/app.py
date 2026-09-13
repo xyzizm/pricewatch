@@ -45,7 +45,9 @@ class Watch:
 _UNSET = object()  # tells "no price supplied" apart from "price is None"
 
 
-def check_watch(watch: Watch, store: Store, price=_UNSET) -> List[Alert]:
+def check_watch(
+    watch: Watch, store: Store, price=_UNSET, *, advance: bool = True
+) -> List[Alert]:
     """
     Run every rule against one price and update state.
 
@@ -75,7 +77,8 @@ def check_watch(watch: Watch, store: Store, price=_UNSET) -> List[Alert]:
         if (alert := rule.evaluate(watch.display, price, previous)) is not None
     ]
 
-    store.set(watch.state_key, price)
+    if advance:
+        store.set(watch.state_key, price)
     return alerts
 
 
@@ -206,14 +209,25 @@ def run_once(
 
     delivered = 0
     for watch in watches:
+        price = prices.get(id(watch), None)
         try:
-            alerts = check_watch(watch, store, prices.get(id(watch), None))
+            # Delivery owns the commit point. If every channel is temporarily
+            # down, retaining the previous price makes the crossing retry on
+            # the next cycle instead of disappearing forever.
+            alerts = check_watch(watch, store, price, advance=False)
         except Exception as exc:
             print(f"! {watch.display}: check failed — {type(exc).__name__}: {exc}")
             continue
 
+        all_alerts_delivered = True
         for alert in alerts:
-            delivered += deliver(alert, notifiers)
+            sent = deliver(alert, notifiers)
+            delivered += sent
+            if sent == 0:
+                all_alerts_delivered = False
+
+        if price is not None and (not alerts or all_alerts_delivered):
+            store.set(watch.state_key, price)
 
     try:
         store.save()

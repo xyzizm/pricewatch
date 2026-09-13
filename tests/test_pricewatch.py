@@ -305,6 +305,24 @@ def test_failed_delivery_is_not_counted():
           delivered == 0, delivered)
 
 
+def test_failed_delivery_retries_before_advancing_state():
+    provider = FakeProvider([200, 200])
+    watch = Watch(symbol="X", provider=provider,
+                  rules=[AboveRule(threshold=1)])
+    store = MemoryStore()
+
+    first = run_once([watch], [RecordingNotifier(succeed=False)], store)
+    check("delivery: failed alert leaves state uncommitted",
+          first == 0 and store.get("fake:X") is None, store.data)
+
+    recorder = RecordingNotifier(succeed=True)
+    second = run_once([watch], [recorder], store)
+    check("delivery: uncommitted crossing is retried",
+          second == 1 and len(recorder.sent) == 1, recorder.sent)
+    check("delivery: successful retry commits state",
+          store.get("fake:X") == 200, store.data)
+
+
 # ---------------------------------------------------------------- config
 
 def test_build_watches():
@@ -527,6 +545,7 @@ if __name__ == "__main__":
         test_healthy_notifier_still_receives_after_sibling_fails,
         test_exploding_provider_does_not_stop_other_watches,
         test_failed_delivery_is_not_counted,
+        test_failed_delivery_retries_before_advancing_state,
         test_build_watches,
         test_build_notifiers_defaults_to_console,
         test_notifier_factory_validation,
