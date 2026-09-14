@@ -59,7 +59,9 @@ class TelegramNotifier:
                 timeout=self.timeout,
             )
         except requests.RequestException as exc:
-            print(f"! telegram: request failed: {exc}")
+            # requests exceptions may include the URL, whose path contains
+            # the bot token. Keep diagnostics useful without logging secrets.
+            print(f"! telegram: request failed ({type(exc).__name__})")
             return False
 
         if response.status_code != 200:
@@ -92,7 +94,8 @@ class WebhookNotifier:
                 timeout=self.timeout,
             )
         except requests.RequestException as exc:
-            print(f"! webhook: request failed: {exc}")
+            # Webhook URLs frequently carry credentials in their path/query.
+            print(f"! webhook: request failed ({type(exc).__name__})")
             return False
 
         if response.status_code >= 300:

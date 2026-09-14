@@ -1,5 +1,15 @@
 # PriceWatch
 
+Delivery uses a persistent outbox: the observed price and the exact alert are
+saved before sending. An undelivered event survives a price reversal and a
+restart, and is retried even if the next price fetch fails. An event is complete
+once at least one configured notifier accepts it. A crash after sending but
+before saving the acknowledgement can duplicate delivery (at-least-once).
+The state file now uses a version-2 envelope containing prices and pending
+alerts; legacy price-only JSON is loaded automatically. Back up the state file
+before upgrading: older versions cannot read the new envelope. Custom Store
+implementations must expose and persist a `pending` list of Alert values.
+
 [![CI](https://github.com/xyzizm/pricewatch/actions/workflows/ci.yml/badge.svg)](https://github.com/xyzizm/pricewatch/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 Crypto price alerts you configure in one JSON file. Watches any number of coins across multiple exchanges and tells you when something you care about happens.
