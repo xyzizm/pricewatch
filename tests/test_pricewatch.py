@@ -312,8 +312,8 @@ def test_failed_delivery_retries_before_advancing_state():
     store = MemoryStore()
 
     first = run_once([watch], [RecordingNotifier(succeed=False)], store)
-    check("delivery: failed alert leaves state uncommitted",
-          first == 0 and store.get("fake:X") is None, store.data)
+    check("delivery: failed alert is queued with its observation",
+          first == 0 and store.get("fake:X") == 200 and len(store.pending) == 1, store.data)
 
     recorder = RecordingNotifier(succeed=True)
     second = run_once([watch], [recorder], store)
@@ -321,6 +321,33 @@ def test_failed_delivery_retries_before_advancing_state():
           second == 1 and len(recorder.sent) == 1, recorder.sent)
     check("delivery: successful retry commits state",
           store.get("fake:X") == 200, store.data)
+
+
+def test_pending_crossing_survives_reversal_and_restart():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "state.json")
+        watch = Watch("X", FakeProvider([200, 50]), [AboveRule(threshold=100)])
+        run_once([watch], [RecordingNotifier(succeed=False)], JsonStore(path))
+        reopened = JsonStore(path)
+        recorder = RecordingNotifier()
+        run_once([watch], [recorder], reopened)
+        check("delivery: original crossing survives reversal and restart",
+              len(recorder.sent) == 1 and recorder.sent[0].price == 200, recorder.sent)
+        check("delivery: successful event is removed durably",
+              JsonStore(path).pending == [])
+
+
+def test_failed_persistence_does_not_send():
+    class BrokenStore(MemoryStore):
+        def save(self):
+            raise OSError("disk full")
+    recorder = RecordingNotifier()
+    try:
+        run_once([Watch("X", FakeProvider([200]), [AboveRule(100)])],
+                 [recorder], BrokenStore())
+    except OSError:
+        pass
+    check("delivery: no external send before durable save", recorder.sent == [])
 
 
 # ---------------------------------------------------------------- config
@@ -546,6 +573,8 @@ if __name__ == "__main__":
         test_exploding_provider_does_not_stop_other_watches,
         test_failed_delivery_is_not_counted,
         test_failed_delivery_retries_before_advancing_state,
+        test_pending_crossing_survives_reversal_and_restart,
+        test_failed_persistence_does_not_send,
         test_build_watches,
         test_build_notifiers_defaults_to_console,
         test_notifier_factory_validation,

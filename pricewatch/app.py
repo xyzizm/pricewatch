@@ -211,24 +211,25 @@ def run_once(
     for watch in watches:
         price = prices.get(id(watch), None)
         try:
-            # Delivery owns the commit point. If every channel is temporarily
-            # down, retaining the previous price makes the crossing retry on
-            # the next cycle instead of disappearing forever.
             alerts = check_watch(watch, store, price, advance=False)
         except Exception as exc:
             print(f"! {watch.display}: check failed — {type(exc).__name__}: {exc}")
             continue
 
-        all_alerts_delivered = True
-        for alert in alerts:
-            sent = deliver(alert, notifiers)
-            delivered += sent
-            if sent == 0:
-                all_alerts_delivered = False
-
-        if price is not None and (not alerts or all_alerts_delivered):
+        store.pending.extend(alerts)
+        if price is not None:
             store.set(watch.state_key, price)
 
+    # Persist the actual event alongside the observation before sending it.
+    # A price reversal or restart cannot erase an undelivered crossing.
+    store.save()
+    remaining = []
+    for alert in store.pending:
+        sent = deliver(alert, notifiers)
+        delivered += sent
+        if sent == 0:
+            remaining.append(alert)
+    store.pending = remaining
     try:
         store.save()
     except Exception as exc:
